@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { Filters } from "../components/Filters";
+import Filters from "../components/Filters";
 import { ProductGrid } from "../components/ProductGrid";
 import { CartPanel } from "../components/CartPanel";
 

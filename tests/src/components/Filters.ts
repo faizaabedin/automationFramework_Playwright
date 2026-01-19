@@ -1,73 +1,103 @@
 import { Page, Locator, expect } from "@playwright/test";
-import type { Size } from "../data/sizes";
 
-export class Filters {
+export default class Filters {
     constructor(private readonly page: Page) { }
 
-    private checkboxByValue(value: string): Locator {
-        return this.page.locator(`input[data-testid="checkbox"][value="${value}"]`);
+    private inputByValue(value: string): Locator {
+        return this.page.locator(
+            `input[type="checkbox"][data-testid="checkbox"][value="${value}"]`
+        );
     }
 
-    private labelForCheckbox(input: Locator): Locator {
-        return this.page.locator("label", { has: input });
+    private labelByValue(value: string): Locator {
+        // <label><input ... value="XS"/><span class="checkmark">XS</span></label>
+        return this.page.locator(
+            `label:has(input[type="checkbox"][data-testid="checkbox"][value="${value}"])`
+        );
     }
 
-    // Optional fallback if a version shows label text "M/L"
-    private checkboxByLabelText(labelText: string): Locator {
-        return this.page
-            .locator("label", { hasText: labelText })
-            .locator('input[type="checkbox"][data-testid="checkbox"]');
+    private allInputs(): Locator {
+        return this.page.locator('input[type="checkbox"][data-testid="checkbox"]');
     }
 
-    async selectSizes(sizes: readonly Size[]) {
-        for (const size of sizes) {
-            await this.setSize(size, true);
-        }
+    /** Returns currently checked size values, e.g. ["XS","ML"] */
+    async getCheckedValues(): Promise<string[]> {
+        const inputs = this.allInputs();
+        await expect(inputs.first()).toBeVisible();
+
+        const checked = await inputs.evaluateAll((els) =>
+            els
+                .filter((e) => (e as HTMLInputElement).checked)
+                .map((e) => (e as HTMLInputElement).value)
+        );
+
+        return checked as string[];
     }
 
-    async unselectSizes(sizes: readonly Size[]) {
-        for (const size of sizes) {
-            await this.setSize(size, false);
-        }
-    }
+    /**
+     * Toggle a size to a target checked state, with retries for detach/re-render.
+     */
+    private async setOne(value: string, shouldBeChecked: boolean) {
+        const input = this.inputByValue(value);
+        await expect(input, `Size "${value}" checkbox not found`).toHaveCount(1);
 
-    async clearAllSizes() {
-        const inputs = this.page.locator('input[data-testid="checkbox"]');
-        const n = await inputs.count();
+        // If already correct, do nothing
+        if ((await input.isChecked()) === shouldBeChecked) return;
 
-        for (let i = 0; i < n; i++) {
-            const cb = inputs.nth(i);
-            if (await cb.isChecked()) {
-                await this.labelForCheckbox(cb).click();
-                await expect(cb).not.toBeChecked();
+        for (let attempt = 1; attempt <= 6; attempt++) {
+            try {
+                // click the LABEL (not the input) to avoid "checkmark intercepts pointer events"
+                const label = this.labelByValue(value);
+                await label.scrollIntoViewIfNeeded();
+                await label.click({ timeout: 3000 });
+
+                // wait until the checked state actually matches
+                await expect
+                    .poll(async () => await input.isChecked(), { timeout: 5000 })
+                    .toBe(shouldBeChecked);
+
+                return;
+            } catch (e: any) {
+                const msg = String(e?.message ?? e);
+                const retryable =
+                    /detached|not attached|Execution context was destroyed|intercepts pointer events/i.test(
+                        msg
+                    );
+
+                if (!retryable || attempt === 6) throw e;
+                await this.page.waitForTimeout(150);
             }
         }
     }
 
     /**
-     * Core toggle logic: click the LABEL (never input.check/uncheck)
-     * because the styled span.checkmark intercepts pointer events.
+     * Strongest API: set sizes to exactly this list.
+     * - checks missing
+     * - unchecks extras
+     * - avoids blind clicking
      */
-    private async setSize(size: Size, shouldBeChecked: boolean) {
-        // Primary checkbox locator
-        let cb = this.checkboxByValue(size);
+    async setSizesExactly(desired: string[]) {
+        const desiredSet = new Set(desired);
+        const current = await this.getCheckedValues();
 
-        // Fallback for ML if value="ML" isn't present
-        if (size === "ML" && (await cb.count()) === 0) {
-            cb = this.checkboxByLabelText("M/L");
+        // Uncheck ones not desired
+        for (const v of current) {
+            if (!desiredSet.has(v)) {
+                await this.setOne(v, false);
+            }
         }
 
-        await expect(cb, `Size checkbox "${size}" not found`).toHaveCount(1);
+        // Check ones missing
+        for (const v of desired) {
+            await this.setOne(v, true);
+        }
+    }
 
-        const isChecked = await cb.isChecked();
-        if (shouldBeChecked === isChecked) return; // already correct
-
-        await this.labelForCheckbox(cb).click();
-
-        if (shouldBeChecked) {
-            await expect(cb).toBeChecked();
-        } else {
-            await expect(cb).not.toBeChecked();
+    /** Convenience: clear all selected sizes */
+    async clearAllSizes() {
+        const current = await this.getCheckedValues();
+        for (const v of current) {
+            await this.setOne(v, false);
         }
     }
 }

@@ -1,74 +1,111 @@
 import { Page, Locator, expect } from "@playwright/test";
 
 export class ProductGrid {
-  constructor(private readonly page: Page) {}
+    constructor(private readonly page: Page) { }
 
-  private productsFoundLabel(): Locator {
-    return this.page.getByText(/Product\(s\) found/i);
-  }
+    private productsFoundLabel(): Locator {
+        return this.page.getByText(/Product\(s\) found/i);
+    }
 
-  /**
-   * Finds the product name <p> inside the grid cards.
-   * Using exact match helps avoid accidental matches.
-   */
-  private productNameP(productName: string): Locator {
-    return this.page.locator('div[tabindex="1"] p', { hasText: productName }).filter({
-      hasText: productName,
-    });
-  }
+    private productCards(): Locator {
+        return this.page.locator('div[tabindex="1"]').filter({
+            has: this.page.getByRole("button", { name: /add to cart/i }),
+        });
+    }
 
-  /**
-   * Product card:
-   * Find the product name <p> then go up to the nearest ancestor div[tabindex="1"].
-   */
-  private cardByName(productName: string): Locator {
-    return this.productNameP(productName)
-      .first()
-      .locator("xpath=ancestor::div[@tabindex='1'][1]");
-  }
+    async visibleProductCount(): Promise<number> {
+        return await this.productCards().count();
+    }
 
-  /** All product cards: div[tabindex="1"] that has an "Add to cart" button */
-  private productCards(): Locator {
-    return this.page
-      .locator('div[tabindex="1"]')
-      .filter({ has: this.page.getByRole("button", { name: /add to cart/i }) });
-  }
+    async expectProductsFoundMatchesGrid() {
+        await expect(this.productsFoundLabel()).toBeVisible();
 
-  async visibleProductCount(): Promise<number> {
-    return await this.productCards().count();
-  }
+        const labelText = await this.productsFoundLabel().innerText();
+        const match = labelText.match(/\d+/);
+        const foundCount = match ? Number(match[0]) : NaN;
 
-  async expectProductsFoundMatchesGrid() {
-    await expect(this.productsFoundLabel()).toBeVisible();
+        expect(foundCount, `Could not parse count from: "${labelText}"`).not.toBeNaN();
 
-    const labelText = await this.productsFoundLabel().innerText();
-    const match = labelText.match(/\d+/);
-    const foundCount = match ? Number(match[0]) : NaN;
+        const gridCount = await this.visibleProductCount();
+        expect(gridCount).toBe(foundCount);
+    }
 
-    expect(foundCount, `Could not parse count from: "${labelText}"`).not.toBeNaN();
+    /**
+     * Short + stable: waits until label count equals grid card count
+     * for 2 consecutive polls (prevents one-tick flake).
+     */
+    async waitForGridStable(timeoutMs = 15000) {
+        const label = this.productsFoundLabel();
+        await expect(label).toBeVisible({ timeout: timeoutMs });
 
-    const gridCount = await this.visibleProductCount();
-    expect(gridCount).toBe(foundCount);
-  }
+        let stableHits = 0;
 
-  async waitForProductVisible(productName: string) {
-    const nameP = this.productNameP(productName);
+        await expect
+            .poll(async () => {
+                const text = (await label.innerText()).trim();
+                const match = text.match(/(\d+)\s*Product\(s\)\s*found/i);
+                if (!match) {
+                    stableHits = 0;
+                    return false;
+                }
 
-    await expect
-      .poll(async () => await nameP.count(), {
-        timeout: 15000,
-        message: `Product "${productName}" did not appear in the grid`,
-      })
-      .toBeGreaterThan(0);
-  }
+                const found = Number(match[1]);
+                const grid = await this.visibleProductCount();
 
-    async addToCartByName(name: string) {
-        const card = this.cardByName(name);
-        await expect(card, `Product card not found: ${name}`).toHaveCount(1);
+                if (found === grid) stableHits++;
+                else stableHits = 0;
 
-        const addBtn = card.getByRole("button", { name: /add to cart/i });
-        await expect(addBtn, `Add to cart button missing for: ${name}`).toBeVisible();
+                return stableHits >= 2;
+            }, { timeout: timeoutMs })
+            .toBe(true);
+    }
 
-        await addBtn.click();
+    /**
+     * Most stable way in your DOM:
+     * each product card contains: <div alt="Blue T-Shirt" ... />
+     */
+    private cardByAlt(productName: string): Locator {
+        return this.page.locator('div[tabindex="1"]').filter({
+            has: this.page.locator(`div[alt="${productName}"]`),
+        });
+    }
+
+    async waitForProductVisible(productName: string) {
+        await expect
+            .poll(async () => await this.cardByAlt(productName).count(), {
+                timeout: 15000,
+                message: `Product "${productName}" did not appear in the grid (likely filtered out)`,
+            })
+            .toBe(1);
+
+        await expect(this.cardByAlt(productName)).toBeVisible();
+    }
+
+    async addToCartByName(productName: string) {
+        // Helps avoid trying to click while grid is still re-rendering
+        await this.waitForGridStable();
+
+        // Strict: product must be visible
+        await this.waitForProductVisible(productName);
+
+        // Retry click in case React re-renders detach the button
+        for (let attempt = 1; attempt <= 6; attempt++) {
+            const card = this.cardByAlt(productName);
+            const addBtn = card.getByRole("button", { name: /^Add to cart$/i });
+
+            try {
+                await addBtn.scrollIntoViewIfNeeded();
+                await expect(addBtn).toBeVisible();
+                await addBtn.click({ timeout: 3000 });
+                return;
+            } catch (e: any) {
+                const msg = String(e?.message ?? e);
+                const retryable =
+                    /detached|not attached|Execution context was destroyed/i.test(msg);
+
+                if (!retryable || attempt === 6) throw e;
+                await this.page.waitForTimeout(150);
+            }
+        }
     }
 }
