@@ -22,13 +22,18 @@ test("Shopping Cart Logic & Validation (full scenario)", async ({ page }) => {
     // now the product should be back
     // const cartQty = page.locator('[title="Products in cart quantity"]');
 
-    // await expect(cartQty).toHaveText("0"); 
-    // await app.grid.waitForProductVisible("Blue T-Shirt");
+    await app.cart.expectCountClosed(0);
 
-    // await expect(cartQty).toHaveText("1");
-    // await app.grid.addToCartByName("Black T-shirt with white stripes");
-    // await expect(cartQty).toHaveText("2");
+    await app.grid.waitForProductVisible("Blue T-Shirt");
+    await app.grid.addToCartByName("Blue T-Shirt");
+    await app.cart.expectCountOpen(1);
+    await app.cart.close;
 
+    await app.grid.waitForProductVisible("Black T-shirt with white stripes");
+    await app.grid.addToCartByName("Black T-shirt with white stripes");
+    await app.cart.expectCountOpen(2);
+
+    
     // Capture unit prices for subtotal calculation
     // const bluePrice = await app.grid.getUnitPrice(PRODUCTS.BLUE_TSHIRT);
     // const blackPrice = await app.grid.getUnitPrice(PRODUCTS.BLACK_STRIPES);
