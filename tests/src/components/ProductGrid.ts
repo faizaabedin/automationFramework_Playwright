@@ -21,8 +21,8 @@ export class ProductGrid {
         await expect(this.productsFoundLabel()).toBeVisible();
 
         const labelText = await this.productsFoundLabel().innerText();
-        const match = labelText.match(/\d+/);
-        const foundCount = match ? Number(match[0]) : NaN;
+        const match = labelText.match(/(\d+)/);
+        const foundCount = match ? Number(match[1]) : NaN;
 
         expect(foundCount, `Could not parse count from: "${labelText}"`).not.toBeNaN();
 
@@ -30,40 +30,45 @@ export class ProductGrid {
         expect(gridCount).toBe(foundCount);
     }
 
-    /**
-     * Short + stable: waits until label count equals grid card count
-     * for 2 consecutive polls (prevents one-tick flake).
-     */
+    /** Short + stable: label count must equal grid count twice in a row */
     async waitForGridStable(timeoutMs = 15000) {
         const label = this.productsFoundLabel();
         await expect(label).toBeVisible({ timeout: timeoutMs });
 
+        let lastSig = "";
         let stableHits = 0;
 
         await expect
             .poll(async () => {
                 const text = (await label.innerText()).trim();
-                const match = text.match(/(\d+)\s*Product\(s\)\s*found/i);
-                if (!match) {
+                const m = text.match(/(\d+)\s*Product\(s\)\s*found/i);
+                if (!m) {
                     stableHits = 0;
+                    lastSig = "";
                     return false;
                 }
 
-                const found = Number(match[1]);
+                const found = Number(m[1]);
                 const grid = await this.visibleProductCount();
 
-                if (found === grid) stableHits++;
-                else stableHits = 0;
+                if (found !== grid) {
+                    stableHits = 0;
+                    lastSig = "";
+                    return false;
+                }
+
+                const sig = `${found}|${grid}`;
+                if (sig === lastSig) stableHits++;
+                else {
+                    stableHits = 1;
+                    lastSig = sig;
+                }
 
                 return stableHits >= 2;
             }, { timeout: timeoutMs })
             .toBe(true);
     }
 
-    /**
-     * Most stable way in your DOM:
-     * each product card contains: <div alt="Blue T-Shirt" ... />
-     */
     private cardByAlt(productName: string): Locator {
         return this.page.locator('div[tabindex="1"]').filter({
             has: this.page.locator(`div[alt="${productName}"]`),
@@ -82,13 +87,9 @@ export class ProductGrid {
     }
 
     async addToCartByName(productName: string) {
-        // Helps avoid trying to click while grid is still re-rendering
         await this.waitForGridStable();
-
-        // Strict: product must be visible
         await this.waitForProductVisible(productName);
 
-        // Retry click in case React re-renders detach the button
         for (let attempt = 1; attempt <= 6; attempt++) {
             const card = this.cardByAlt(productName);
             const addBtn = card.getByRole("button", { name: /^Add to cart$/i });
@@ -100,8 +101,7 @@ export class ProductGrid {
                 return;
             } catch (e: any) {
                 const msg = String(e?.message ?? e);
-                const retryable =
-                    /detached|not attached|Execution context was destroyed/i.test(msg);
+                const retryable = /detached|not attached|Execution context was destroyed/i.test(msg);
 
                 if (!retryable || attempt === 6) throw e;
                 await this.page.waitForTimeout(150);
