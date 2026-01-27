@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { StorePage } from "../src/pages/StorePage";
+import { PRODUCTS } from "../src/data/products";
+import { TIMEOUTS } from "../src/utils/constants";
 
 test("Shopping Cart Logic & Validation (full scenario)", async ({ page }) => {
     // optional but recommended: ensure clean state every run
@@ -26,7 +28,10 @@ test("Shopping Cart Logic & Validation (full scenario)", async ({ page }) => {
 
     // NOW confirm the count changed (grid repopulated)
     await expect
-        .poll(async () => await app.grid.visibleProductCount(), { timeout: 15000 })
+        .poll(async () => await app.grid.visibleProductCount(), { 
+            timeout: TIMEOUTS.POLL_LONG,
+            message: "Grid count did not change after clearing filters"
+        })
         .not.toBe(filteredCount);
 
     // cart starts empty (closed badge)
@@ -34,19 +39,19 @@ test("Shopping Cart Logic & Validation (full scenario)", async ({ page }) => {
     await app.cart.expectCountClosed(0);
 
     // 4) add items
-    await app.grid.addToCartByName("Blue T-Shirt");
+    await app.grid.addToCartByName(PRODUCTS.BLUE_TSHIRT);
     await app.cart.close(); // ✅ call it
     await app.cart.expectCountClosed(1);
 
-    await app.grid.addToCartByName("Black T-shirt with white stripes");
+    await app.grid.addToCartByName(PRODUCTS.BLACK_STRIPES);
     await app.cart.close(); // ✅ call it
     await app.cart.expectCountClosed(2);
 
     // Open cart + Step 7: increase Blue qty to 3
     await app.cart.open();
-    await app.cart.expectRowQuantity("Blue T-Shirt", 1);
-    await app.cart.clickPlus("Blue T-Shirt", 2);
-    await app.cart.expectRowQuantity("Blue T-Shirt", 3);
+    await app.cart.expectRowQuantity(PRODUCTS.BLUE_TSHIRT, 1);
+    await app.cart.clickPlus(PRODUCTS.BLUE_TSHIRT, 2);
+    await app.cart.expectRowQuantity(PRODUCTS.BLUE_TSHIRT, 3);
 
     // Step 8: total items (total quantity) updated correctly:
     // Blue=3, Black=1 => total=4
@@ -54,8 +59,8 @@ test("Shopping Cart Logic & Validation (full scenario)", async ({ page }) => {
 
     // Step 9: pricing logic (UI prices * quantities)
     await app.cart.expectSubtotalForTwoItems(
-        "Blue T-Shirt", 3,
-        "Black T-shirt with white stripes", 1
+        PRODUCTS.BLUE_TSHIRT, 3,
+        PRODUCTS.BLACK_STRIPES, 1
     );
 
     // 10) Clear the Cart

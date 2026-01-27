@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from "@playwright/test";
+import { TIMEOUTS } from "../utils/constants";
 
 export class Filters {
   constructor(private readonly page: Page) {}
@@ -42,26 +43,28 @@ export class Filters {
     if ((await input.isChecked()) === shouldBeChecked) return;
 
     for (let attempt = 1; attempt <= 6; attempt++) {
-      try {
-        const label = this.labelByValue(value);
-        await label.scrollIntoViewIfNeeded();
-        await label.click({ timeout: 3000 });
+            try {
+                const label = this.labelByValue(value);
+                await label.scrollIntoViewIfNeeded();
+                await label.click({ timeout: TIMEOUTS.CLICK });
 
-        await expect
-          .poll(async () => await input.isChecked(), { timeout: 5000 })
-          .toBe(shouldBeChecked);
+                await expect
+                  .poll(async () => await input.isChecked(), { timeout: TIMEOUTS.POLL_SHORT })
+                  .toBe(shouldBeChecked);
 
-        return;
-      } catch (e: any) {
-        const msg = String(e?.message ?? e);
-        const retryable =
-          /detached|not attached|Execution context was destroyed|intercepts pointer events/i.test(
-            msg
-          );
+                return;
+            } catch (e: any) {
+                const msg = String(e?.message ?? e);
+                const retryable =
+                  /detached|not attached|Execution context was destroyed|intercepts pointer events/i.test(
+                    msg
+                  );
 
-        if (!retryable || attempt === 6) throw e;
-        await this.page.waitForTimeout(150);
-      }
+                if (!retryable || attempt === 6) {
+                    throw new Error(`Failed to ${shouldBeChecked ? 'check' : 'uncheck'} size "${value}" after ${attempt} attempts: ${msg}`);
+                }
+                await this.page.waitForTimeout(TIMEOUTS.SHORT);
+            }
     }
   }
 

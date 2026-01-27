@@ -57,4 +57,6 @@ Additional testcases:
 
 - Very large quantity update should remain consistent (e.g., add +10 quickly).
 
-v                                                                  cc b 
+- minus button boundaries 
+
+- Add same product multiple times and similar name 

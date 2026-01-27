@@ -1,4 +1,6 @@
 import { Page, Locator, expect } from "@playwright/test";
+import { parseMoney, toCents } from "../utils/money";
+import { TIMEOUTS } from "../utils/constants";
 
 export class CartPanel {
     constructor(private readonly page: Page) { }
@@ -59,7 +61,10 @@ export class CartPanel {
         // same as open count (total quantity)
         await this.open();
         await expect
-            .poll(async () => Number((await this.openCountBadge().innerText()).trim()), { timeout: 8000 })
+            .poll(async () => Number((await this.openCountBadge().innerText()).trim()), { 
+                timeout: TIMEOUTS.POLL_MEDIUM,
+                message: `Expected total items to be ${expectedTotal} but it didn't update in time`
+            })
             .toBe(expectedTotal);
     }
 
@@ -89,64 +94,65 @@ export class CartPanel {
         return this.page.locator("p.sc-1h98xa9-9");
     }
 
-    private parseMoney(text: string): number {
-        const cleaned = text.replace(/[^0-9.]/g, "");
-        return Number(cleaned || "0");
-    }
-
     private parseQty(text: string): number {
         const m = text.match(/Quantity:\s*(\d+)/i);
         return m ? Number(m[1]) : NaN;
     }
 
-    private toCents(n: number): number {
-        return Math.round(n * 100);
-    }
-
     async getQuantity(productName: string): Promise<number> {
         await this.open();
-        await expect(this.rowByProductAlt(productName)).toHaveCount(1);
+        await expect(this.rowByProductAlt(productName), `Product "${productName}" not found in cart`).toHaveCount(1);
 
         const txt = (await this.qtyTextInRow(productName).innerText()).trim();
-        return this.parseQty(txt);
+        const qty = this.parseQty(txt);
+        if (Number.isNaN(qty)) {
+            throw new Error(`Could not parse quantity from text: "${txt}" for product "${productName}"`);
+        }
+        return qty;
     }
 
     async expectRowQuantity(productName: string, expectedQty: number) {
         await this.open();
-        await expect(this.rowByProductAlt(productName)).toHaveCount(1);
+        await expect(this.rowByProductAlt(productName), `Product "${productName}" not found in cart`).toHaveCount(1);
 
         await expect
-            .poll(async () => await this.getQuantity(productName), { timeout: 8000 })
+            .poll(async () => await this.getQuantity(productName), { 
+                timeout: TIMEOUTS.POLL_MEDIUM,
+                message: `Expected quantity for "${productName}" to be ${expectedQty} but it didn't update in time`
+            })
             .toBe(expectedQty);
     }
 
     async clickPlus(productName: string, times: number) {
         await this.open();
-        await expect(this.rowByProductAlt(productName)).toHaveCount(1);
+        await expect(this.rowByProductAlt(productName), `Product "${productName}" not found in cart`).toHaveCount(1);
 
         for (let i = 0; i < times; i++) {
             const plus = this.plusBtnInRow(productName); // re-query each time
-            await expect(plus).toBeVisible();
-            await plus.click();
+            await expect(plus, `Plus button for "${productName}" not visible`).toBeVisible();
+            await plus.click({ timeout: TIMEOUTS.CLICK });
         }
     }
     async getUnitPrice(productName: string): Promise<number> {
         await this.open();
-        await expect(this.rowByProductAlt(productName)).toHaveCount(1);
+        await expect(this.rowByProductAlt(productName), `Product "${productName}" not found in cart`).toHaveCount(1);
 
         const txt = (await this.priceTextInRow(productName).innerText()).trim();
-        return this.parseMoney(txt);
+        return parseMoney(txt);
     }
 
     async getSubtotal(): Promise<number> {
         await this.open();
         const txt = (await this.subtotalText().innerText()).trim();
-        return this.parseMoney(txt);
+        return parseMoney(txt);
     }
     async expectSubtotalMatchesExpected(expected: number) {
         await this.open();
         await expect
-            .poll(async () => this.toCents(await this.getSubtotal()), { timeout: 8000 })
+            .poll(async () => this.toCents(await this.getSubtotal()), { 
+                timeout: TIMEOUTS.POLL_MEDIUM,
+                message: `Expected subtotal to be $${expected.toFixed(2)} but it didn't update in time`
+            })
             .toBe(this.toCents(expected));
     }
 
@@ -164,6 +170,16 @@ export class CartPanel {
         const expected = bluePrice * blueQty + blackPrice * blackQty;
         await this.expectSubtotalMatchesExpected(expected);
     }
+
+    async removeProduct(productName: string) {
+        await this.open();
+        await expect(this.rowByProductAlt(productName), `Product "${productName}" not found in cart`).toHaveCount(1);
+        
+        const removeBtn = this.rowByProductAlt(productName).getByRole("button", { name: /remove/i });
+        await expect(removeBtn, `Remove button for "${productName}" not found`).toBeVisible();
+        await removeBtn.click({ timeout: TIMEOUTS.CLICK });
+    }
+
     async clearCart() {
         await this.open();
 
@@ -174,7 +190,10 @@ export class CartPanel {
 
                 await this.removeButtons().first().click();
                 return await this.removeButtons().count();
-            }, { timeout: 15000 })
+            }, { 
+                timeout: TIMEOUTS.POLL_LONG,
+                message: "Failed to clear cart - items still remain after timeout"
+            })
             .toBe(0);
     }
 
@@ -183,8 +202,11 @@ export class CartPanel {
         await expect
             .poll(async () => {
                 const txt = (await this.subtotalText().innerText()).trim();
-                return this.toCents(this.parseMoney(txt));
-            }, { timeout: 8000 })
+                return this.toCents(parseMoney(txt));
+            }, { 
+                timeout: TIMEOUTS.POLL_MEDIUM,
+                message: "Expected subtotal to be $0.00 but it didn't update in time"
+            })
             .toBe(0);
     }
 

@@ -14,7 +14,9 @@ export class StorePage {
         this.cart = new CartPanel(page);
     }
 
-    async goto() {
-        await this.page.goto("https://automation-interview.vercel.app/");
+    async goto(path: string = "/") {
+        // When baseURL is set in playwright.config.ts, use relative paths
+        // Otherwise, this will use the full URL from baseURL config
+        await this.page.goto(path);
     }
 }

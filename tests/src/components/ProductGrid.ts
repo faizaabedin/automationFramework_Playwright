@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from "@playwright/test";
+import { TIMEOUTS } from "../utils/constants";
 
 export class ProductGrid {
     constructor(private readonly page: Page) { }
@@ -31,7 +32,7 @@ export class ProductGrid {
     }
 
     /** Short + stable: label count must equal grid count twice in a row */
-    async waitForGridStable(timeoutMs = 15000) {
+    async waitForGridStable(timeoutMs = TIMEOUTS.GRID_STABLE) {
         const label = this.productsFoundLabel();
         await expect(label).toBeVisible({ timeout: timeoutMs });
 
@@ -78,7 +79,7 @@ export class ProductGrid {
     async waitForProductVisible(productName: string) {
         await expect
             .poll(async () => await this.cardByAlt(productName).count(), {
-                timeout: 15000,
+                timeout: TIMEOUTS.PRODUCT_VISIBLE,
                 message: `Product "${productName}" did not appear in the grid (likely filtered out)`,
             })
             .toBe(1);
@@ -97,14 +98,16 @@ export class ProductGrid {
             try {
                 await addBtn.scrollIntoViewIfNeeded();
                 await expect(addBtn).toBeVisible();
-                await addBtn.click({ timeout: 3000 });
+                await addBtn.click({ timeout: TIMEOUTS.CLICK });
                 return;
             } catch (e: any) {
                 const msg = String(e?.message ?? e);
                 const retryable = /detached|not attached|Execution context was destroyed/i.test(msg);
 
-                if (!retryable || attempt === 6) throw e;
-                await this.page.waitForTimeout(150);
+                if (!retryable || attempt === 6) {
+                    throw new Error(`Failed to add "${productName}" to cart after ${attempt} attempts: ${msg}`);
+                }
+                await this.page.waitForTimeout(TIMEOUTS.SHORT);
             }
         }
     }
