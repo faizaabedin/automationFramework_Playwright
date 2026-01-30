@@ -1,5 +1,5 @@
 import { Page, Locator, expect } from "@playwright/test";
-import { parseMoney, toCents } from "../utils/money";
+import { parseMoney,toCents } from "../utils/money";
 import { TIMEOUTS } from "../utils/constants";
 
 export class CartPanel {
@@ -16,14 +16,17 @@ export class CartPanel {
     }
 
     private closedCountBadge(): Locator {
+        //here tittle is the most table selector
         return this.page.locator('[title="Products in cart quantity"]');
     }
 
     private floatingCartButton(): Locator {
+        // using xpath beacuse actual tittle is not clickable actual button in the neasrest ancestor button
         return this.closedCountBadge().locator("xpath=ancestor::button[1]");
     }
 
     async open() {
+        //check to see cart is already open by checking for 'x'
         const x = this.page.getByRole("button", { name: "X" });
         if (await x.count()) return;
 
@@ -35,47 +38,46 @@ export class CartPanel {
         // Ensure panel is closed so the closed badge exists
         await this.close();
 
-        // Now the badge should exist and show the total quantity
-        await expect(this.closedCountBadge()).toHaveCount(1);
+        // Now the badge should exist and show the total quantity, UI assertions, correct num shown
         await expect(this.closedCountBadge()).toHaveText(String(count));
-    }
-    private cartPanel(): Locator {
-        return this.page.locator("div.sc-1h98xa9-4"); // cart panel container when open
-    }
-
-    private closeBtn(): Locator {
-        return this.cartPanel().getByRole("button", { name: "X" });
     }
 
     private openCountBadge(): Locator {
-        // Open cart header badge next to "Cart" (total quantity)
-        return this.page.locator('.sc-1h98xa9-5:has-text("Cart") .VLMSP');
-    }
+        //get badge number by anchoring on the text "Cart". 1st get span 'Cart', 2nd go to parent and 3rd get badge inside.
+        return this.page
+            .locator('span:has-text("Cart")')
+            .locator("..")                 // parent = sc-1h98xa9-5 container
+            .locator("div.VLMSP");         // badge inside
+    }    
 
     async expectCountOpen(count: number) {
         await this.open();
+        await expect(this.openCountBadge()).toHaveCount(1);
         await expect(this.openCountBadge()).toHaveText(String(count));
     }
 
     async expectTotalItemsOpen(expectedTotal: number) {
         // same as open count (total quantity)
         await this.open();
-        await expect
-            .poll(async () => Number((await this.openCountBadge().innerText()).trim()), { 
-                timeout: TIMEOUTS.POLL_MEDIUM,
-                message: `Expected total items to be ${expectedTotal} but it didn't update in time`
-            })
-            .toBe(expectedTotal);
+        // Polling waits until UI updates after clicks (state updates, animations).
+        await expect(this.openCountBadge()).toHaveText(String(expectedTotal), {
+            timeout: TIMEOUTS.POLL_MEDIUM,
+        });
     }
+            
 
     private rowByProductAlt(productName: string): Locator {
-        return this.page.locator("div.sc-11uohgb-0").filter({
-            has: this.page.locator(`img[alt="${productName}"]`),
-        });
+        // anchor on the unique product image alt, then climb to the row container
+        const img = this.page.locator(`img[alt="${productName}"]`);
+        return img.locator('xpath=ancestor::div[.//button[@title="remove product from cart"]][1]');
     }
 
     private qtyTextInRow(productName: string): Locator {
-        return this.rowByProductAlt(productName).locator("p.sc-11uohgb-3");
+        //goes row of product gets to <p> looks for Quantity and then gets first 
+        return this.rowByProductAlt(productName)
+            .locator("p")
+            .filter({ hasText: /Quantity:\s*\d+/i })
+            .first();
     }
 
     private plusBtnInRow(productName: string): Locator {
@@ -83,7 +85,7 @@ export class CartPanel {
     }
 
     private priceTextInRow(productName: string): Locator {
-        return this.rowByProductAlt(productName).locator("div.sc-11uohgb-4 p").first();
+        return this.rowByProductAlt(productName).locator('p:has-text("$")').first();
     }
 
     private removeButtons(): Locator {
@@ -91,16 +93,26 @@ export class CartPanel {
     }
 
     private subtotalText(): Locator {
-        return this.page.locator("p.sc-1h98xa9-9");
+        return this.page
+            .locator(':text-matches("Subtotal", "i")')
+            .locator('xpath=ancestor::*[1]')
+            .locator('p:has-text("$")')
+            .first();
     }
 
     private parseQty(text: string): number {
-        const m = text.match(/Quantity:\s*(\d+)/i);
-        return m ? Number(m[1]) : NaN;
+        const match = /Quantity:\s*(\d+)/i.exec(text);
+        if (!match) {
+            throw new Error(`Could not find quantity in text: "${text}"`);
+        }
+        return Number(match[1]);
     }
 
     async getQuantity(productName: string): Promise<number> {
+        //open cart if not open
         await this.open();
+        
+        //check for product
         await expect(this.rowByProductAlt(productName), `Product "${productName}" not found in cart`).toHaveCount(1);
 
         const txt = (await this.qtyTextInRow(productName).innerText()).trim();
@@ -111,16 +123,11 @@ export class CartPanel {
         return qty;
     }
 
+    //assertions for getQuantity
     async expectRowQuantity(productName: string, expectedQty: number) {
-        await this.open();
-        await expect(this.rowByProductAlt(productName), `Product "${productName}" not found in cart`).toHaveCount(1);
-
-        await expect
-            .poll(async () => await this.getQuantity(productName), { 
-                timeout: TIMEOUTS.POLL_MEDIUM,
-                message: `Expected quantity for "${productName}" to be ${expectedQty} but it didn't update in time`
-            })
-            .toBe(expectedQty);
+        await expect.poll(() => this.getQuantity(productName), {
+            timeout: TIMEOUTS.POLL_MEDIUM,
+        }).toBe(expectedQty);
     }
 
     async clickPlus(productName: string, times: number) {
@@ -128,8 +135,12 @@ export class CartPanel {
         await expect(this.rowByProductAlt(productName), `Product "${productName}" not found in cart`).toHaveCount(1);
 
         for (let i = 0; i < times; i++) {
+            const row = this.rowByProductAlt(productName);
+            await expect(row, `Product "${productName}" not found in cart`).toHaveCount(1);
+
             const plus = this.plusBtnInRow(productName); // re-query each time
             await expect(plus, `Plus button for "${productName}" not visible`).toBeVisible();
+            
             await plus.click({ timeout: TIMEOUTS.CLICK });
         }
     }
@@ -146,14 +157,16 @@ export class CartPanel {
         const txt = (await this.subtotalText().innerText()).trim();
         return parseMoney(txt);
     }
+
     async expectSubtotalMatchesExpected(expected: number) {
-        await this.open();
-        await expect
-            .poll(async () => this.toCents(await this.getSubtotal()), { 
-                timeout: TIMEOUTS.POLL_MEDIUM,
-                message: `Expected subtotal to be $${expected.toFixed(2)} but it didn't update in time`
-            })
-            .toBe(this.toCents(expected));
+        const expectedCents = toCents(expected);
+
+        await expect(async () => {
+            const actualCents = toCents(await this.getSubtotal()); // calls open()
+            expect(actualCents).toBe(expectedCents);
+        }).toPass({
+            timeout: TIMEOUTS.POLL_MEDIUM,
+        });
     }
 
     async expectSubtotalForTwoItems(
@@ -202,7 +215,7 @@ export class CartPanel {
         await expect
             .poll(async () => {
                 const txt = (await this.subtotalText().innerText()).trim();
-                return this.toCents(parseMoney(txt));
+                return toCents(parseMoney(txt));
             }, { 
                 timeout: TIMEOUTS.POLL_MEDIUM,
                 message: "Expected subtotal to be $0.00 but it didn't update in time"

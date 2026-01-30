@@ -40,11 +40,11 @@ test("Shopping Cart Logic & Validation (full scenario)", async ({ page }) => {
 
     // 4) add items
     await app.grid.addToCartByName(PRODUCTS.BLUE_TSHIRT);
-    await app.cart.close(); // ✅ call it
+    await app.cart.close(); // 
     await app.cart.expectCountClosed(1);
 
     await app.grid.addToCartByName(PRODUCTS.BLACK_STRIPES);
-    await app.cart.close(); // ✅ call it
+    await app.cart.close(); // 
     await app.cart.expectCountClosed(2);
 
     // Open cart + Step 7: increase Blue qty to 3
